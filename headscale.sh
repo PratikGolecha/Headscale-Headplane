@@ -1,16 +1,20 @@
 #!/bin/bash
 
-# Check if the script is run as root
+# Must run as root
 if [[ $EUID -ne 0 ]]; then
-   echo "This script must be run as root." 
+   echo "This script must be run as root."
    exit 1
 fi
 
-# Prompt the user for the full domain (including subdomain)
+echo "============================================"
+echo " Headscale + Headplane Installer"
+echo "============================================"
+echo ""
+
 read -p "Enter your full domain (e.g., headscale.example.com): " FULL_DOMAIN
 
-# Create directory structure
-mkdir -p headscale/data headscale/configs/headscale headscale/headplane/data
+# Create required folders
+mkdir -p headscale/data headscale/configs/headscale headscale/headplane/data headscale/letsencrypt
 
 ########################################
 # DOCKER COMPOSE (HEADSCALE + HEADPLANE)
@@ -81,17 +85,20 @@ EOF
 # HEADSCALE CONFIG FILE
 ########################################
 cat <<EOF > headscale/configs/headscale/config.yaml
-server_url: https://$FULL_DOMAIN
+server_url: http://headscale:8080
 listen_addr: 0.0.0.0:8080
 metrics_listen_addr: 127.0.0.1:9090
 grpc_listen_addr: 127.0.0.1:50443
 grpc_allow_insecure: false
+
 noise:
   private_key_path: /var/lib/headscale/noise_private.key
+
 prefixes:
   v4: 100.64.0.0/10
   v6: fd7a:115c:a1e0::/48
   allocation: sequential
+
 derp:
   server:
     enabled: true
@@ -105,6 +112,32 @@ derp:
     ipv6: 2001:db8::1
   urls:
     - https://controlplane.tailscale.com/derpmap/default
+
+database:
+  type: sqlite
+  debug: false
+  gorm:
+    prepare_stmt: true
+    parameterized_queries: true
+    skip_err_record_not_found: true
+    slow_threshold: 1000
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+    write_ahead_log: true
+    wal_autocheckpoint: 1000
+
+policy:
+  mode: database
+  path: ""
+
+dns:
+  override_local_dns: false
+  magic_dns: true
+  base_domain: headscale.local
+  nameservers:
+    global:
+      - 1.1.1.1
+      - 8.8.8.8
 EOF
 
 ########################################
@@ -130,12 +163,24 @@ integration:
     socket: "unix:///var/run/docker.sock"
 EOF
 
+########################################
+# START SERVICES
+########################################
+
 echo "Starting Headscale + Headplane..."
 docker compose -f headscale/docker-compose.yaml up -d || exit 1
 
 sleep 10
 
-API_KEY=$(docker exec headscale headscale apikey create)
+########################################
+# API KEY GENERATION
+########################################
+
+API_KEY=$(docker exec headscale headscale apikeys create 2>/dev/null)
+
+if [[ -z "$API_KEY" ]]; then
+    API_KEY=$(docker exec headscale headscale apikey create 2>/dev/null)
+fi
 
 echo ""
 echo "=========================================="
