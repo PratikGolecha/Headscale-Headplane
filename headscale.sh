@@ -33,11 +33,24 @@ services:
       TZ: 'Asia/Kolkata'
     labels:
       - "traefik.enable=true"
+
+      # ROUTER: / → Headscale API
       - "traefik.http.routers.headscale.rule=Host(\`$FULL_DOMAIN\`)"
       - "traefik.http.routers.headscale.entrypoints=websecure"
       - "traefik.http.routers.headscale.tls.certresolver=myresolver"
       - "traefik.http.routers.headscale.tls=true"
       - "traefik.http.services.headscale.loadbalancer.server.port=8080"
+
+      # MIDDLEWARE: auto redirect / to /admin
+      - "traefik.http.middlewares.rewrite.addprefix.prefix=/admin"
+      - "traefik.http.routers.headscale.middlewares=rewrite,cors"
+
+      # CORS Middleware
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowheaders=*"
+      - "traefik.http.middlewares.cors.headers.accesscontrolallowmethods=GET,POST,PUT"
+      - "traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist=https://$FULL_DOMAIN"
+      - "traefik.http.middlewares.cors.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.cors.headers.addvaryheader=true"
 
   headplane:
     image: 'ghcr.io/tale/headplane:latest'
@@ -53,10 +66,15 @@ services:
       - '/var/run/docker.sock:/var/run/docker.sock:ro'
     labels:
       - "traefik.enable=true"
+
+      # HEADPLANE UI ROUTER
       - "traefik.http.routers.headplane.rule=Host(\`$FULL_DOMAIN\`) && PathPrefix(\`/admin\`)"
       - "traefik.http.routers.headplane.entrypoints=websecure"
       - "traefik.http.routers.headplane.tls=true"
       - "traefik.http.services.headplane.loadbalancer.server.port=3000"
+
+      # Attach CORS middleware
+      - "traefik.http.routers.headplane.middlewares=cors"
 
   traefik:
     image: "traefik:latest"
@@ -82,7 +100,7 @@ services:
 EOF
 
 ########################################
-# HEADSCALE CONFIG FILE
+# HEADSCALE CONFIG FILE (FULLY FIXED)
 ########################################
 cat <<EOF > headscale/configs/headscale/config.yaml
 server_url: http://headscale:8080
@@ -141,7 +159,7 @@ dns:
 EOF
 
 ########################################
-# HEADPLANE CONFIG
+# HEADPLANE CONFIG FILE
 ########################################
 cat <<EOF > headscale/headplane/config.yaml
 server:
